@@ -11,6 +11,7 @@ import android.os.SystemClock
 import android.preference.PreferenceManager
 import android.support.v7.app.AppCompatActivity
 import android.text.TextUtils
+import android.text.format.DateUtils
 import android.text.method.PasswordTransformationMethod
 import android.util.Log
 import android.view.*
@@ -19,9 +20,11 @@ import com.zeapo.pwdstore.PasswordEntry
 import com.zeapo.pwdstore.R
 import com.zeapo.pwdstore.UserPreference
 import com.zeapo.pwdstore.pwgenDialogFragment
+import com.zeapo.pwdstore.utils.PasswordRepository
 import kotlinx.android.synthetic.main.decrypt_layout.*
 import kotlinx.android.synthetic.main.encrypt_layout.*
 import org.apache.commons.io.FileUtils
+import org.eclipse.jgit.api.Git
 import org.openintents.openpgp.IOpenPgpService2
 import org.openintents.openpgp.OpenPgpError
 import org.openintents.openpgp.util.OpenPgpApi
@@ -44,6 +47,7 @@ class PgpActivity : AppCompatActivity(), OpenPgpServiceConnection.OnBound {
 
     val fullPath: String by lazy { intent.getStringExtra("FILE_PATH") }
     val name: String by lazy { getName(fullPath, repoPath) }
+    val lastChangedString: CharSequence by lazy { getLastChanged(fullPath, repoPath) }
     val relativeParentPath: String by lazy { getParentPath(fullPath, repoPath) }
 
     val settings: SharedPreferences by lazy { PreferenceManager.getDefaultSharedPreferences(this) }
@@ -73,6 +77,14 @@ class PgpActivity : AppCompatActivity(), OpenPgpServiceConnection.OnBound {
                 setContentView(R.layout.decrypt_layout)
                 crypto_password_category_decrypt.text = relativeParentPath
                 crypto_password_file.text = name
+
+                val lastChanged: String = try {
+                    this.resources.getString(R.string.last_changed, lastChangedString)
+                } catch (e: RuntimeException) {
+                    ""
+                }
+
+                crypto_password_last_changed.text = lastChanged
             }
             "ENCRYPT" -> {
                 setContentView(R.layout.encrypt_layout)
@@ -479,6 +491,21 @@ class PgpActivity : AppCompatActivity(), OpenPgpServiceConnection.OnBound {
         // launch a new one
         delayTask = DelayShow(this)
         delayTask?.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR)
+    }
+
+    /**
+     * Gets a relative string describing when this shape was last changed
+     * (e.g. "one hour ago")
+     */
+    private fun getLastChanged(fullPath: String, repositoryPath: String): CharSequence {
+        val repository = PasswordRepository.getRepository(File(repositoryPath))
+        val git = Git(repository)
+        val relativePath = getRelativePath(fullPath, repositoryPath).substring(1)
+        val iterable = git.log().addPath(relativePath).call()
+        val latestCommit = iterable.iterator().next() ?: throw RuntimeException()
+
+        val timeStamp = latestCommit.commitTime
+        return DateUtils.getRelativeTimeSpanString(this, timeStamp.toLong() * 1000, true)
     }
 
     inner class DelayShow(val activity: PgpActivity) : AsyncTask<Void, Int, Boolean>() {
